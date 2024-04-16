@@ -1,66 +1,47 @@
-Function Update-DeviceDrivers
+param(
+    [Parameter(Mandatory)]
+    [string]$TargetPnpDeviceFriendlyName
+)
+
+Function Update-DeviceDrivers([string]$targetPnpDeviceInstanceId)
 {
-     $UpdateDeviceDrivers = @"
+     $UpdateDeviceDriversSource = @"
 using System;
 using System.Runtime.InteropServices;
 namespace DeviceDrivers
 {
-    public static class ChangeAudioDriver
+    public static class UpdateDrivers
     {
         public enum DIOD
         {
             None = (0),
             CANCEL_REMOVE = (0x00000004),
-            // If this flag is specified and the device had been marked for pending removal, the OS cancels the pending removal. 
             INHERIT_CLASSDRVS = (0x00000002)
-            //the resulting device information element inherits the class driver list, if any
         }
 
         public enum DICD
         {
             None = (0),
-            GENERATE_ID = (0x00000001), // create unique device instance key
-            INHERIT_CLASSDRVS = (0x00000002)  // inherit class driver list
+            GENERATE_ID = (0x00000001),
+            INHERIT_CLASSDRVS = (0x00000002)
         }
 
         public enum SPDIT
         {
             None = (0),
-            SPDIT_COMPATDRIVER = (0x00000002), // Build a list of compatible drivers
-            SPDIT_CLASSDRIVER = (0x00000001)  // Build a list of class drivers
-        }
-
-        public enum DI_FLAGS
-        {
-             DI_FLAGSEX_INSTALLEDDRIVER = (0x04000000),
-             DI_FLAGSEX_ALLOWEXCLUDEDDRVS = (0x00000800)
+            SPDIT_COMPATDRIVER = (0x00000002),
+            SPDIT_CLASSDRIVER = (0x00000001)
         }
 
         [StructLayout(LayoutKind.Sequential)]
         public class SP_DEVINFO_DATA
         {
-            /// <summary>
-            /// Size of the structure, in bytes. 
-            /// </summary>
             public Int32 cbSize = Marshal.SizeOf(typeof(SP_DEVINFO_DATA));
-
-            /// <summary>
-            /// GUID of the device interface class. 
-            /// </summary>
             public Guid ClassGuid;
-
-            /// <summary>
-            /// Handle to this device instance. 
-            /// </summary>
             public Int32 DevInst;
-
-            /// <summary>
-            /// Reserved; do not use. 
-            /// </summary>
             public IntPtr Reserved;
         }
 
-        // 64 bit: Pack=4
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack=4)]
         public class SP_DRVINFO_DATA
         {
@@ -77,7 +58,6 @@ namespace DeviceDrivers
             public Int64 DriverVersion;
         }
 
-        // 64 bit: Pack=8
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 8)]
         public class SP_DRVINFO_DETAIL_DATA
         {
@@ -96,27 +76,10 @@ namespace DeviceDrivers
             public string HardwareID;
         }
 
-        // 64 bit: Pack=8
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 8)]
-        public class SP_DEVINSTALL_PARAMS
-        {
-            public Int32 cbSize;
-            public Int32 Flags;
-            public DI_FLAGS FlagsEx;
-            public IntPtr hwndParent;
-            public IntPtr InstallMsgHandler;
-            public IntPtr InstallMsgHandlerContext;
-            public IntPtr FileQueue;
-            public UIntPtr ClassInstallReserved;
-            public Int32 Reserved;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-            public string DriverPath;
-        }
-
         [DllImport("Setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern IntPtr SetupDiGetClassDevs(
             IntPtr DeviceInfoSet,
-            IntPtr Enumerator
+            IntPtr Enumerator,
             IntPtr hwndParent,
             int Flags
             );
@@ -132,13 +95,6 @@ namespace DeviceDrivers
 
         [DllImport("Setupapi.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public extern static IntPtr SetupDiCreateDeviceInfoList
-            (
-            IntPtr ClassGuid,
-            IntPtr hwndParent
-            );
-        
-        [DllImport("Setupapi.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        public extern static IntPtr SetupDiGetClassDevsW 
             (
             IntPtr ClassGuid,
             IntPtr hwndParent
@@ -170,13 +126,6 @@ namespace DeviceDrivers
             out int RequiredSize
             );
 
-        [DllImport("Setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern bool SetupDiSetDeviceInstallParams(
-            IntPtr DeviceInfoSet,
-            SP_DEVINFO_DATA DeviceInfoData,
-            SP_DEVINSTALL_PARAMS DeviceInstallParams
-            );
-
         [DllImport("Newdev.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool DiInstallDevice(
             IntPtr hwndParent,
@@ -196,14 +145,69 @@ namespace DeviceDrivers
             [Out] bool NeedReboot
         );
 
-        public static GetDeviceInformationSet()
+        public static void GetDeviceInformationSet(string targetPnpDeviceInstanceId)
         {
+            int error = 0;
+            IntPtr hDevSet = SetupDiCreateDeviceInfoList(IntPtr.Zero, IntPtr.Zero);
+            SP_DEVINFO_DATA deviceInfoData = new SP_DEVINFO_DATA();
+            bool bRet = SetupDiOpenDeviceInfo(hDevSet, targetPnpDeviceInstanceId, IntPtr.Zero, 0, deviceInfoData);
+            if (bRet == false)
+            {
+                Console.WriteLine("Error: " + Marshal.GetLastWin32Error());
+                return;
+            }
 
+            bRet = SetupDiBuildDriverInfoList(hDevSet, deviceInfoData, SPDIT.SPDIT_COMPATDRIVER);
+            if (bRet == false)
+            {
+                Console.WriteLine("Error: " + Marshal.GetLastWin32Error());
+                return;
+            }
+            int driverItr = 0;
+            bool bResult = true;
+            while (bResult)
+            {
+                SP_DRVINFO_DATA driverInfoData = new SP_DRVINFO_DATA();
+                driverInfoData.cbSize = Marshal.SizeOf(typeof(SP_DRVINFO_DATA));
+                bRet = SetupDiEnumDriverInfo(hDevSet, deviceInfoData, SPDIT.SPDIT_COMPATDRIVER, driverItr, driverInfoData);
+                if (bRet == false)
+                {
+                    Console.WriteLine("Error: " + Marshal.GetLastWin32Error());
+                    return;
+                }
+
+                int requiredSize = 0;
+                SP_DRVINFO_DETAIL_DATA driverInfoDetailData = new SP_DRVINFO_DETAIL_DATA();
+                driverInfoDetailData.cbSize = Marshal.SizeOf(typeof(SP_DRVINFO_DETAIL_DATA));
+                int dataSize = Marshal.SizeOf(driverInfoDetailData);
+
+                bRet = SetupDiGetDriverInfoDetail(hDevSet, deviceInfoData, driverInfoData, driverInfoDetailData, dataSize, out requiredSize);
+                if (bRet == false)
+                {
+                    error = Marshal.GetLastWin32Error();
+                    //122 - ERROR_INSUFFICIENT_BUFFER, expected error
+                    if (error != 122)
+                    {
+                        Console.WriteLine("Error: " + Marshal.GetLastWin32Error());
+                    }
+                }
+
+                Console.WriteLine(deviceInfoData.ClassGuid);
+                Console.WriteLine(driverInfoData.MfgName);
+                Console.WriteLine(driverInfoData.Description);
+                Console.WriteLine(driverInfoData.ProviderName);
+                Console.WriteLine(driverInfoDetailData.DrvDescription);
+                Console.WriteLine(driverInfoDetailData.HardwareID);
+                driverItr++;
+            }
         }
     }
 }
 "@
-    Add-Type -TypeDefinition $UpdateDeviceDrivers -Language CSharp
+    Add-Type -TypeDefinition $UpdateDeviceDriversSource -Language CSharp
+    [DeviceDrivers.UpdateDrivers]::GetDeviceInformationSet($targetPnpDeviceInstanceId)
 }
 
-
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+$pnpDevice = Get-PnpDevice -FriendlyName $TargetPnpDeviceFriendlyName
+Update-DeviceDrivers($pnpDevice.InstanceId)

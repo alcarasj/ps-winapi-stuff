@@ -202,5 +202,73 @@
                 driverItr++;
             }
         }
+
+        public static void PerformWindowsUpdate()
+        {
+            try
+            {
+                // Create an UpdateSession object
+                UpdateSession updateSession = new UpdateSession();
+
+                // Create an UpdateSearcher object
+                IUpdateSearcher updateSearcher = updateSession.CreateUpdateSearcher();
+
+                // Search for updates that are not installed
+                Console.WriteLine("Searching for updates...");
+                ISearchResult searchResult = updateSearcher.Search("IsInstalled=0");
+
+                Console.WriteLine("Updates found: " + searchResult.Updates.Count);
+                foreach (IUpdate update in searchResult.Updates)
+                {
+                    Console.WriteLine("Title: " + update.Title);
+                }
+
+                if (searchResult.Updates.Count == 0)
+                {
+                    Console.WriteLine("No updates available.");
+                    return;
+                }
+
+                // Create an UpdateDownloader object
+                UpdateDownloader updateDownloader = updateSession.CreateUpdateDownloader();
+                updateDownloader.Updates = searchResult.Updates;
+
+                // Download updates
+                Console.WriteLine("Downloading updates...");
+                IDownloadResult downloadResult = updateDownloader.Download();
+
+                // Check download result
+                if (downloadResult.ResultCode == OperationResultCode.orcSucceeded)
+                {
+                    Console.WriteLine("Download successful!");
+
+                    // Create an UpdateInstaller object
+                    IUpdateInstaller updateInstaller = updateSession.CreateUpdateInstaller();
+                    updateInstaller.Updates = searchResult.Updates;
+
+                    // Install updates
+                    Console.WriteLine("Installing updates...");
+                    IInstallationResult installationResult = updateInstaller.Install();
+
+                    // Check installation result
+                    if (installationResult.ResultCode == OperationResultCode.orcSucceeded)
+                    {
+                        Console.WriteLine("Installation successful!");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Installation failed with error code: " + installationResult.ResultCode);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Download failed with error code: " + downloadResult.ResultCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("An error occurred: " + ex.Message);
+            }
+        }
     }
 }
